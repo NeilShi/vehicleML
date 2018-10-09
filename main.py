@@ -57,12 +57,9 @@ def translate_field_type(df):
     return df
 
 
-def get_over_speed_rate(df, vid_type):
+def get_over_speed_rate(df, speed):
     origin_len = len(df)
-    if vid_type == '公':
-        df = df.loc[df['speed'] > 40]
-    else:
-        df = df.loc[df['speed'] > 80]
+    df = df.loc[df['speed'] > speed]
     # print('origin:%d, over speed:%d' % (origin_len, len(df)))
     return round(len(df)/origin_len, 4)
 
@@ -85,9 +82,40 @@ def get_start_up_rate(df1, df2):
     return round(len(df1)/(len(df1) + len(df2)), 4)
 
 
+def get_mean_speed(df):
+    start_timestamp = 0
+    # 一个驾驶行为内的所有速度
+    driving_part_of_speed = []
+    # 所有驾驶行为平均速度数组
+    mean_speed_list = []
+    # flag = True 时开始取下一个新的驾驶行为
+    flag = True
+    for index, row in df.iterrows():
+        timestamp = 0
+        ts = time.strptime(str(row['daq_time']), '%Y%m%d%H%M%S')
+        if flag:
+            start_timestamp = int(time.mktime(ts))
+            driving_part_of_speed.append(int(row['speed']))
+        else:
+            timestamp = int(time.mktime(ts))
+            driving_part_of_speed.append(int(row['speed']))
+        if timestamp-start_timestamp > 30:
+            # 采样点不足则剔除
+            if (timestamp-start_timestamp) / 30 > len(driving_part_of_speed):
+                flag = True
+                driving_part_of_speed = []
+                continue
+            else:
+                mean_speed_list.append(sum(driving_part_of_speed) / len(driving_part_of_speed))
+                driving_part_of_speed = []
+        else:
+            flag = False
+    return sum(mean_speed_list) / len(mean_speed_list)
+
+
 def generate_summary_per_vid(vid):
     global chunk, driving_df, stalled_df, vehicle_summary_df
-    vid_type = vid[2]
+    # vid_type = vid[2]
     for chunk in chunks:
         chunk_grouped = chunk.groupby('vid')
         try:
@@ -102,8 +130,10 @@ def generate_summary_per_vid(vid):
     driving_df = translate_field_type(driving_df)
     # 排除里程异常值
     driving_df = driving_df.loc[driving_df['mileage'] <= get_max_mileage(driving_df)]
+    # 至少隔30s采样 取平均速度
+    mean_speed = get_mean_speed(driving_df)
     summary_df_by_vid = pd.DataFrame([[vid,
-                                       get_over_speed_rate(driving_df, vid_type),
+                                       get_over_speed_rate(driving_df, mean_speed),
                                        get_morning_and_evening_peak_rate(driving_df),
                                        get_max_mileage(driving_df), get_driving_mileage(driving_df),
                                        get_night_driving_rate(driving_df), get_start_up_rate(driving_df, stalled_df)]],
