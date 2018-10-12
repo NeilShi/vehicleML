@@ -11,8 +11,8 @@ chunks = []
 loop = True
 driving_df = pd.DataFrame(columns=['vid', 'daq_time', 'speed', 'mileage', 'status'])
 stalled_df = pd.DataFrame(columns=['vid', 'daq_time', 'speed', 'mileage', 'status'])
-vehicle_summary_df = pd.DataFrame(columns=['vid', 'over_speed_rate', 'morning_and_evening_peak_rate', 'max_mileage',
-                                  'driving_mileage', 'night_driving_rate', 'start_up_rate'])
+summary_driving_behavior = pd.DataFrame(columns=['T', 'T_a', 'T_d', 'T_c', 'T_i', 'v_max', 'v_m', 'a_max', 'a_a',
+                                                 'a_min', 'a_d'])
 vid_list = vidlist.get_vid_map()
 
 
@@ -52,8 +52,8 @@ def get_driving_mileage(df):
 
 
 def translate_field_type(df):
-    df['speed'] = df['speed'].apply(lambda row: int(row))
-    df['mileage'] = df['mileage'].apply(lambda row: int(row))
+    df['speed'] = df['speed'].apply(lambda row: float(row))
+    df['mileage'] = df['mileage'].apply(lambda row: float(row))
     return df
 
 
@@ -82,39 +82,103 @@ def get_start_up_rate(df1, df2):
     return round(len(df1)/(len(df1) + len(df2)), 4)
 
 
-def get_mean_speed(df):
+def generate_driving_behavior_df(dp_list):
+    driving_behavior = {
+        'T': 0,
+        'T_a': 0,
+        'T_d': 0,
+        'T_c': 0,
+        'T_i': 0,
+        'v_max': 0,
+        'v_m': 0,
+        'a_max': 0,
+        'a_a': 0,
+        'a_min': 0,
+        'a_d': 0
+    }
+    v_list = []
+    acc_list = []
+    dec_list = []
+    for index in range(len(dp_list)):
+        v_list.append(dp_list[index]['speed'])
+        if index == (len(dp_list) - 1):
+            driving_behavior['T'] = dp_list[index]['timestamp'] - dp_list[0]['timestamp']
+        if index < (len(dp_list) - 1):
+            if (dp_list[index + 1]['timestamp'] - dp_list[index]['timestamp']) * (1000.0/3600.0) == 0:
+                continue
+            a = (dp_list[index + 1]['speed'] - dp_list[index]['speed']) / \
+                (dp_list[index + 1]['timestamp'] - dp_list[index]['timestamp']) * (1000.0/3600.0)
+            if a >= 0.1:
+                acc_list.append(a)
+                driving_behavior['T_a'] += (dp_list[index + 1]['timestamp'] - dp_list[index]['timestamp'])
+            if a <= -0.1:
+                dec_list.append(a)
+                driving_behavior['T_d'] += (dp_list[index + 1]['timestamp'] - dp_list[index]['timestamp'])
+            if a == 0:
+                driving_behavior['T_c'] += (dp_list[index + 1]['timestamp'] - dp_list[index]['timestamp'])
+            if dp_list[index + 1]['speed'] == dp_list[index]['speed'] == 0:
+                driving_behavior['T_i'] += (dp_list[index + 1]['timestamp'] - dp_list[index]['timestamp'])
+
+    if len(v_list) > 0:
+        driving_behavior['v_max'] = max(v_list)
+        driving_behavior['v_m'] = sum(v_list) / len(v_list)
+    if len(acc_list) > 0:
+        driving_behavior['a_max'] = max(acc_list)
+        driving_behavior['a_a'] = sum(acc_list) / len(acc_list)
+    if len(dec_list) > 0:
+        driving_behavior['a_min'] = min(dec_list)
+        driving_behavior['a_d'] = sum(dec_list) / len(dec_list)
+    vehicle_driving_behavior_df = pd.DataFrame([[driving_behavior['T'], driving_behavior['T_a'],
+                                                 driving_behavior['T_d'],
+                                                 driving_behavior['T_c'], driving_behavior['T_i'],
+                                                 driving_behavior['v_max'],
+                                                 driving_behavior['v_m'], driving_behavior['a_max'],
+                                                 driving_behavior['a_a'],
+                                                 driving_behavior['a_min'], driving_behavior['a_d']]],
+                                               columns=['T', 'T_a', 'T_d', 'T_c', 'T_i', 'v_max', 'v_m',
+                                                        'a_max', 'a_a', 'a_min', 'a_d'])
+    return vehicle_driving_behavior_df
+
+
+def generate_summary_driving_behavior_df(df):
+    global summary_driving_behavior
     start_timestamp = 0
-    # 一个驾驶行为内的所有速度
-    driving_part_of_speed = []
-    # 所有驾驶行为平均速度数组
-    mean_speed_list = []
+    # 一个驾驶行为片段
+    driving_part = []
     # flag = True 时开始取下一个新的驾驶行为
     flag = True
     for index, row in df.iterrows():
+        # 简化后一行数据
+        simple_data = {
+            'timestamp': 0,
+            'speed': float(row['speed'])
+        }
         timestamp = 0
         ts = time.strptime(str(row['daq_time']), '%Y%m%d%H%M%S')
         if flag:
-            start_timestamp = int(time.mktime(ts))
-            driving_part_of_speed.append(int(row['speed']))
+            start_timestamp = float(time.mktime(ts))
+            simple_data['timestamp'] = start_timestamp
+            driving_part.append(simple_data)
         else:
-            timestamp = int(time.mktime(ts))
-            driving_part_of_speed.append(int(row['speed']))
+            timestamp = float(time.mktime(ts))
+            simple_data['timestamp'] = timestamp
+            driving_part.append(simple_data)
         if timestamp-start_timestamp > 30:
             # 采样点不足则剔除
-            if (timestamp-start_timestamp) / 30 > len(driving_part_of_speed):
+            if (timestamp-start_timestamp) / 30 > len(driving_part):
                 flag = True
-                driving_part_of_speed = []
+                driving_part = []
                 continue
             else:
-                mean_speed_list.append(sum(driving_part_of_speed) / len(driving_part_of_speed))
-                driving_part_of_speed = []
+                summary_driving_behavior = pd.concat([summary_driving_behavior,
+                                                      generate_driving_behavior_df(driving_part)], axis=0, sort=False)
+                driving_part = []
         else:
             flag = False
-    return sum(mean_speed_list) / len(mean_speed_list)
 
 
 def generate_summary_per_vid(vid):
-    global chunk, driving_df, stalled_df, vehicle_summary_df
+    global chunk, driving_df, stalled_df, summary_driving_behavior
     # vid_type = vid[2]
     for chunk in chunks:
         chunk_grouped = chunk.groupby('vid')
@@ -131,16 +195,8 @@ def generate_summary_per_vid(vid):
     # 排除里程异常值
     driving_df = driving_df.loc[driving_df['mileage'] <= get_max_mileage(driving_df)]
     # 至少隔30s采样 取平均速度
-    mean_speed = get_mean_speed(driving_df)
-    summary_df_by_vid = pd.DataFrame([[vid,
-                                       get_over_speed_rate(driving_df, mean_speed),
-                                       get_morning_and_evening_peak_rate(driving_df),
-                                       get_max_mileage(driving_df), get_driving_mileage(driving_df),
-                                       get_night_driving_rate(driving_df), get_start_up_rate(driving_df, stalled_df)]],
-                                     columns=['vid', 'over_speed_rate', 'morning_and_evening_peak_rate', 'max_mileage',
-                                              'driving_mileage', 'night_driving_rate', 'start_up_rate'])
-    # print(vehicle_summary_df)
-    vehicle_summary_df = pd.concat([vehicle_summary_df, summary_df_by_vid], axis=0, sort=False)
+    generate_summary_driving_behavior_df(driving_df)
+    print(summary_driving_behavior)
 
 
 start = time.time()
@@ -157,7 +213,7 @@ for vid in vid_list:
     print('generate ', vid)
     generate_summary_per_vid(vid)
 
-vehicle_summary_df.to_csv('summary/summary.csv', encoding='utf-8')
+summary_driving_behavior.to_csv('summary/summary.csv', encoding='utf-8')
 time_elapsed = time.time() - start
 print('The code run {:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
 
