@@ -9,10 +9,10 @@ vehicle_data = pd.read_csv('sample_sh50_time_1.csv',
 chunkSize = 200000
 chunks = []
 loop = True
-driving_df = pd.DataFrame(columns=['vid', 'daq_time', 'speed', 'mileage', 'status'])
-stalled_df = pd.DataFrame(columns=['vid', 'daq_time', 'speed', 'mileage', 'status'])
-summary_driving_behavior = pd.DataFrame(columns=['T', 'T_a', 'T_d', 'T_c', 'T_i', 'v_max', 'v_m', 'a_max', 'a_a',
-                                                 'a_min', 'a_d'])
+# driving_df = pd.DataFrame(columns=['vid', 'daq_time', 'speed', 'mileage', 'status'])
+# stalled_df = pd.DataFrame(columns=['vid', 'daq_time', 'speed', 'mileage', 'status'])
+# summary_driving_behavior = pd.DataFrame(columns=['T', 'T_a', 'T_d', 'T_c', 'T_i', 'v_max', 'v_m', 'a_max', 'a_a',
+#                                                  'a_min', 'a_d'])
 vid_list = vidlist.get_vid_map()
 
 
@@ -41,7 +41,10 @@ def get_period_of_time(row):
 
 # 从时间排序后的最后一行数据获取最大里程
 def get_max_mileage(df):
-    max_mileage = df.iloc[-1]['mileage']
+    try:
+        max_mileage = df.iloc[-1]['mileage']
+    except IndexError:
+        max_mileage = 0
     return max_mileage
 
 
@@ -141,7 +144,8 @@ def generate_driving_behavior_df(dp_list):
 
 
 def generate_summary_driving_behavior_df(df):
-    global summary_driving_behavior
+    summary_driving_behavior = pd.DataFrame(columns=['T', 'T_a', 'T_d', 'T_c', 'T_i', 'v_max', 'v_m', 'a_max', 'a_a',
+                                                     'a_min', 'a_d'])
     start_timestamp = 0
     # 一个驾驶行为片段
     driving_part = []
@@ -175,15 +179,17 @@ def generate_summary_driving_behavior_df(df):
                 driving_part = []
         else:
             flag = False
+    summary_driving_behavior.to_csv('summary/' + vid + 'summary.csv', encoding='utf-8')
 
 
-def generate_summary_per_vid(vid):
-    global chunk, driving_df, stalled_df, summary_driving_behavior
-    # vid_type = vid[2]
-    for chunk in chunks:
-        chunk_grouped = chunk.groupby('vid')
+def generate_summary_per_vid(vehicle_id):
+    global chunks
+    driving_df = pd.DataFrame(columns=['vid', 'daq_time', 'speed', 'mileage', 'status'])
+    stalled_df = pd.DataFrame(columns=['vid', 'daq_time', 'speed', 'mileage', 'status'])
+    for ck in chunks:
+        chunk_grouped = ck.groupby('vid')
         try:
-            status_grouped = chunk_grouped.get_group(vid).groupby('status')
+            status_grouped = chunk_grouped.get_group(vehicle_id).groupby('status')
             driving_df = pd.concat([driving_df, status_grouped.get_group('1')], axis=0, sort=False)
             stalled_df = pd.concat([stalled_df, status_grouped.get_group('2')], axis=0, sort=False)
         except KeyError:
@@ -196,7 +202,7 @@ def generate_summary_per_vid(vid):
     driving_df = driving_df.loc[driving_df['mileage'] <= get_max_mileage(driving_df)]
     # 至少隔30s采样 取平均速度
     generate_summary_driving_behavior_df(driving_df)
-    print(summary_driving_behavior)
+    # print(summary_driving_behavior)
 
 
 start = time.time()
@@ -213,7 +219,7 @@ for vid in vid_list:
     print('generate ', vid)
     generate_summary_per_vid(vid)
 
-summary_driving_behavior.to_csv('summary/summary.csv', encoding='utf-8')
+# summary_driving_behavior.to_csv('summary/summary.csv', encoding='utf-8')
 time_elapsed = time.time() - start
 print('The code run {:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
 
